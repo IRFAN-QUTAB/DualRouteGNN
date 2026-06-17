@@ -8,8 +8,8 @@ from sklearn.preprocessing import LabelEncoder
 # -----------------------------------------------------------------
 # CONFIGURATION
 # -----------------------------------------------------------------
-INPUT_DIR = r"D:\Manageable\MY Data\roadRouting New\Madrid\step1\data"    # Where Step 1 saved CSVs
-OUTPUT_DIR = r"D:\Manageable\MY Data\roadRouting New\Madrid\step2\data"
+INPUT_DIR = "../data/input"
+OUTPUT_DIR = "../data/output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 print("=" * 60)
@@ -34,7 +34,7 @@ print(f"  Primal edges: {len(df_primal_edges):,}")
 
 
 # =============================================================
-# BUILD DUAL GRAPH (RoadOsm — the main GNN graph)
+# BUILD DUAL GRAPH
 # =============================================================
 print("\n[2] Building DUAL GRAPH (RoadOsm - segment level)...")
 print("=" * 60)
@@ -184,7 +184,7 @@ if isolated > 0:
 
 
 # =============================================================
-# BUILD PRIMAL GRAPH (RoadJunction — for routing)
+# BUILD PRIMAL GRAPH
 # =============================================================
 print("\n\n[3] Building PRIMAL GRAPH (RoadJunction)...")
 print("=" * 60)
