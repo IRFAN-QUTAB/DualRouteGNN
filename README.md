@@ -8,7 +8,7 @@
 
 DualRouteGNN estimates traffic on roads that have no sensors and finds routes that pass through a Point of Interest (POI) the driver wants to visit on the way. For example, a driver going from A to B can ask the system to find a route that passes through a pharmacy, and get three options: the shortest, the one with the least traffic, and a balanced one.
 
-The system uses real traffic sensor data from less than 2% of roads to learn traffic patterns and estimate traffic on the remaining 98%.
+The system uses real traffic sensor data from a small fraction of roads to learn traffic patterns and estimate traffic on the rest.
 
 ---
 
