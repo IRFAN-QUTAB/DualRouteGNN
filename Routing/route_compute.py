@@ -7,9 +7,9 @@ print(f"POI locations loaded: {len(df_pois)}")
 osmnode_to_nodeid = dict(zip(df_primal_nodes['osmnode_id'].astype(str), df_primal_nodes['node_id']))
 
 # =============================================
-SOURCE_OSM = '8288044244'
-TARGET_OSM = '8556638698'
-POI_TYPE = 'charging_station'
+SOURCE_OSM = 'xxxxx'
+TARGET_OSM = 'xxxxx'
+POI_TYPE = 'xxxxx'
 # =============================================
 
 SOURCE_NODE = osmnode_to_nodeid.get(SOURCE_OSM, None)
