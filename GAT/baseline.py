@@ -13,7 +13,7 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 # Load data
-INPUT_DIR = r"D:\Manageable\MY Data\roadRouting New\Madrid\step2\data\segment level"
+INPUT_DIR = "../data/input"
 data = torch.load(f"{INPUT_DIR}\dual_graph.pt", weights_only=False)
 
 X = data.x.numpy()
