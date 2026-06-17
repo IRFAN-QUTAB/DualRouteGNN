@@ -68,7 +68,7 @@ python step1_graph_construction/build_graph.py \
 |-----------|-------------|
 | `-x` | Latitude of the city center |
 | `-y` | Longitude of the city center |
-| `-d` | Radius in meters (11000 = 11 km) |
+| `-d` | Radius in meters |
 | `-n` | Neo4j connection URI |
 | `-u` | Neo4j username |
 | `-p` | Neo4j password |
