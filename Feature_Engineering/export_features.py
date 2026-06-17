@@ -9,9 +9,9 @@ os.environ["NEO4J_NOTIFICATIONS_ENABLED"] = "false"
 
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USER = "neo4j"
-NEO4J_PASSWORD = "irfan1234"
+NEO4J_PASSWORD = "password"
 
-OUTPUT_DIR = r"D:\Manageable\MY Data\roadRouting New\Madrid\step1\data"
+OUTPUT_DIR = "../data/output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # -----------------------------------------------------------------
@@ -246,7 +246,7 @@ print(f"  Saved -> poi_features_grouped.csv")
 
 
 # =============================================================
-# EXPORT 4: POI FEATURES - INDIVIDUAL (for Routing)
+# EXPORT 4: POI FEATURES - INDIVIDUAL
 # =============================================================
 print("\n" + "=" * 60)
 print("[4/7] Exporting INDIVIDUAL POI features (for Routing)...")
@@ -277,7 +277,7 @@ print(f"\n  Saved -> poi_features_individual.csv")
 
 
 # =============================================================
-# EXPORT 5: ENRICHED DUAL NODES (nodes + grouped POI merged)
+# EXPORT 5: ENRICHED DUAL NODES
 # =============================================================
 print("\n" + "=" * 60)
 print("[5/7] Creating enriched dual nodes...")
@@ -304,7 +304,7 @@ print(f"  Saved -> dual_nodes_enriched.csv")
 
 
 # =============================================================
-# EXPORT 6: PRIMAL GRAPH NODES (RoadJunction)
+# EXPORT 6: PRIMAL GRAPH NODES
 # =============================================================
 print("\n" + "=" * 60)
 print("[6/7] Exporting PRIMAL GRAPH nodes (RoadJunction)...")
