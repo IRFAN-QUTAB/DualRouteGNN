@@ -9,7 +9,7 @@ DualRouteGNN is a framework that estimates Annual Average Daily Traffic (AADT) o
 ## Pipeline
 
 1. **Data Source** — Road network from OpenStreetMap (via OSMnx), POIs from Overpass API, real AADT from the European harmonized dataset.
-2. **Graph Construction** — Primal graph (junctions and roads) stored in Neo4j, transformed into a segment-level dual graph (58,854 nodes).
+2. **Graph Construction** — Primal graph (junctions and roads) stored in Neo4j, transformed into a segment-level dual graph.
 3. **Feature Engineering** — 26 features per road: geometry, centrality, POI counts, road type.
 4. **GAT Model** — Three-layer Graph Attention Network estimates AADT, trained on <2% of roads with real counts.
 5. **Multi-objective Routing** — Routes through a user-chosen POI with three options: shortest, least-traffic, and balanced.
