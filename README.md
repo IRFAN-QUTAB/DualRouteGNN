@@ -30,5 +30,3 @@ DualRouteGNN is a framework that estimates Annual Average Daily Traffic (AADT) o
 - Neo4j 4.4.x with GDS plugin
 - PyTorch, PyTorch Geometric
 - OSMnx, Folium, Pandas, NumPy
-
-## Repository Structure
