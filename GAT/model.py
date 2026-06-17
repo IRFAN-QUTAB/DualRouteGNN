@@ -31,8 +31,8 @@ print(f"Device: {DEVICE}, PyTorch: {torch.__version__}")
 # CELL 2: CONFIGURATION
 # =============================================================================
 
-INPUT_DIR = r"D:\Manageable\MY Data\roadRouting New\Madrid\step2\data\segment level"
-OUTPUT_DIR = r"D:\Manageable\MY Data\roadRouting New\Madrid\step3\data\segment level"
+INPUT_DIR = "../data/input"
+OUTPUT_DIR = "../data/output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 HIDDEN_DIM = 64
