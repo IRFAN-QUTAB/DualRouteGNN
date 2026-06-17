@@ -2,31 +2,159 @@
 
 **Graph Attention for Traffic Volume Estimation and POI-Preference Routing from Sparse Sensors on Urban Road Networks**
 
-## Overview
+---
 
-DualRouteGNN is a framework that estimates Annual Average Daily Traffic (AADT) on roads without sensors and routes drivers through user-chosen Points of Interest (POIs). The system builds a segment-level dual graph from OpenStreetMap data in Neo4j, trains a Graph Attention Network on sparse real-world sensor data, and computes multi-objective routes through a selected POI type.
+## What is DualRouteGNN?
 
-## Pipeline
+DualRouteGNN estimates traffic on roads that have no sensors and finds routes that pass through a Point of Interest (POI) the driver wants to visit on the way. For example, a driver going from A to B can ask the system to find a route that passes through a pharmacy, and get three options: the shortest, the one with the least traffic, and a balanced one.
 
-1. **Data Source** — Road network from OpenStreetMap (via OSMnx), POIs from Overpass API, real AADT from the European harmonized dataset.
-2. **Graph Construction** — Primal graph (junctions and roads) stored in Neo4j, transformed into a segment-level dual graph.
-3. **Feature Engineering** — 26 features per road: geometry, centrality, POI counts, road type.
-4. **GAT Model** — Three-layer Graph Attention Network estimates AADT, trained on <2% of roads with real counts.
-5. **Multi-objective Routing** — Routes through a user-chosen POI with three options: shortest, least-traffic, and balanced.
+The system uses real traffic sensor data from less than 2% of roads to learn traffic patterns and estimate traffic on the remaining 98%.
+
+---
+
+## How It Works
+
+| Step | What happens |
+|------|-------------|
+| 1. Graph Construction | Road network and POIs are downloaded from OpenStreetMap and stored in Neo4j |
+| 2. Feature Engineering | Each road gets 26 features: length, lanes, speed, centrality, POI counts, road type |
+| 3. GAT Model | A Graph Attention Network learns from roads with sensors and estimates traffic on the rest |
+| 4. Routing | The system finds a road with the chosen POI and computes three routes through it |
+
+---
 
 ## Results
 
-- GAT achieves R² = 0.74 on test roads, outperforming LR, RF, MLP, and GCN baselines.
-- Across five POI types (clinic, pharmacy, fuel, restaurant, school), the least-traffic route reduces traffic exposure by 62–66% relative to the shortest route.
+| Metric | Value |
+|--------|-------|
+| R² on test roads | 0.74 |
+| Baselines beaten | Linear Regression, Random Forest, MLP, GCN |
+| Traffic reduction (least-traffic vs shortest) | 62–66% |
+| POI types tested | clinic, pharmacy, fuel, restaurant, school |
+
+---
+
+## Getting Started
+
+### Requirements
+
+- Python 3.10+
+- Neo4j 4.4.x with Graph Data Science plugin
+- PyTorch and PyTorch Geometric
+- OSMnx, Folium, Pandas, NumPy
+
+Install Python dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+### Step 1: Build the Road Graph
+
+Download the road network from OpenStreetMap and load it into Neo4j:
+
+```bash
+python step1_graph_construction/build_graph.py \
+    -x 40.4168 \
+    -y -3.7038 \
+    -d 11000 \
+    -n neo4j://localhost:7687 \
+    -u neo4j \
+    -p your_password \
+    -f madrid.graphml
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `-x` | Latitude of the city center |
+| `-y` | Longitude of the city center |
+| `-d` | Radius in meters (11000 = 11 km) |
+| `-n` | Neo4j connection URI |
+| `-u` | Neo4j username |
+| `-p` | Neo4j password |
+| `-f` | Output GraphML filename |
+
+### Step 2: Download and Connect POIs
+
+Download Points of Interest from OpenStreetMap and connect them to the road network:
+
+```bash
+python step1_graph_construction/add_pois.py \
+    -x 40.4168 \
+    -y -3.7038 \
+    -d 11000 \
+    -n neo4j://localhost:7687 \
+    -u neo4j \
+    -p your_password
+```
+
+### Step 3: Feature Engineering
+
+Compute centrality measures, extract features, and build the dual graph:
+
+```bash
+python step2_feature_engineering/extract_features.py
+```
+
+### Step 4: Train the GAT Model
+
+Train the model on roads with real AADT and estimate traffic on the rest:
+
+```bash
+python step3_gat_training/train.py
+```
+
+### Step 5: Run Routing
+
+Compute routes through a chosen POI:
+
+```bash
+python step4_routing/route_compute.py
+```
+
+Visualize routes on a map:
+
+```bash
+python step4_routing/route_visualize.py
+```
+
+Run batch evaluation across 5 POI types:
+
+```bash
+python step4_routing/route_batch_evaluation.py
+```
+
+---
 
 ## City
 
-- **Madrid, Spain** — 58,854 road segments, 1,133 with real AADT sensors (1.93% coverage).
-- Data from: Bonnemaizon et al., "Harmonized Annual Averaged Traffic Data at Street Segment Level for European Cities," Scientific Data, 2025.
+- **Madrid, Spain**
+- 58,854 road segments, 1,133 with real AADT sensors (1.93% coverage)
+- Traffic data from: Bonnemaizon et al., *Harmonized Annual Averaged Traffic Data at Street Segment Level for European Cities*, Scientific Data, 2025.
 
-## Requirements
+---
 
-- Python 3.10+
-- Neo4j 4.4.x with GDS plugin
-- PyTorch, PyTorch Geometric
-- OSMnx, Folium, Pandas, NumPy
+## Repository Structure
+
+DualRouteGNN/
+├── README.md
+├── requirements.txt
+├── data/
+│   └── Madrid_AADT_clean.csv
+├── step1_graph_construction/
+│   ├── build_graph.py
+│   ├── add_pois.py
+│   └── data/
+├── step2_feature_engineering/
+│   ├── extract_features.py
+│   └── data/
+├── step3_gat_training/
+│   ├── train.py
+│   └── data/
+├── step4_routing/
+│   ├── route_setup.py
+│   ├── route_compute.py
+│   ├── route_visualize.py
+│   ├── route_batch_evaluation.py
+│   └── data/
+└── figures/
