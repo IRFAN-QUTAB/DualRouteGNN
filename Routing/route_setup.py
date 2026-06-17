@@ -16,7 +16,6 @@ AADT_CSV = r"D:\Manageable\MY Data\roadRouting New\Madrid\Madrid_AADT_clean.csv"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 print("Step 4: GNN-Enhanced Routing (Madrid)")
 
-import pandas as pd
 
 path = r"D:\Manageable\MY Data\roadRouting New\Madrid\step1\data\segment level"
 
