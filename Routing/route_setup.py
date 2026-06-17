@@ -9,15 +9,15 @@ import matplotlib.pyplot as plt
 %matplotlib inline
 import torch
  
-STEP1_DIR = r"D:\Manageable\MY Data\roadRouting New\Madrid\step2\data\segment level"
-STEP3_DIR = r"D:\Manageable\MY Data\roadRouting New\Madrid\Step3\data\segment level"
-OUTPUT_DIR = r"D:\Manageable\MY Data\roadRouting New\Madrid\step4"
-AADT_CSV = r"D:\Manageable\MY Data\roadRouting New\Madrid\Madrid_AADT_clean.csv"
+STEP1_DIR = os.path.join(BASE_DIR, "..", "step2_feature_engineering", "data")
+STEP3_DIR = os.path.join(BASE_DIR, "..", "step3_gat_training", "data")
+OUTPUT_DIR = os.path.join(BASE_DIR, "data")
+AADT_CSV = os.path.join(BASE_DIR, "..", "data", "Madrid_AADT_clean.csv")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 print("Step 4: GNN-Enhanced Routing (Madrid)")
 
 
-path = r"D:\Manageable\MY Data\roadRouting New\Madrid\step1\data\segment level"
+path = os.path.join(BASE_DIR, "data")
 
 df1 = pd.read_csv(f"{path}/node_pois.csv")
 df2 = pd.read_csv(f"{path}/way_pois.csv")
