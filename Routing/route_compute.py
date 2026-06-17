@@ -1,7 +1,7 @@
 import math
 import folium, webbrowser
 
-df_pois = pd.read_csv(r"D:\Manageable\MY Data\roadRouting New\Madrid\step1\data\segment level\poi_locations.csv")
+df_pois = pd.read_csv = "../data/input"
 print(f"POI locations loaded: {len(df_pois)}")
 
 osmnode_to_nodeid = dict(zip(df_primal_nodes['osmnode_id'].astype(str), df_primal_nodes['node_id']))
