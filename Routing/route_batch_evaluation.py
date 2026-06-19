@@ -58,7 +58,7 @@ def pick_waypoint(src, tgt, poi_type, max_candidates=30):
 # ---------------------------------------------------------------------------
 configs = [
     ('shortest',      1.0, 0.0),
-    ('least_traffic', 0.0, 0.1),
+    ('least_traffic', 0.0, 1.0),
     ('balanced',      0.5, 0.5),
 ]
 
