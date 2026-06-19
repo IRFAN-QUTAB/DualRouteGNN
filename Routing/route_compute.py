@@ -86,7 +86,7 @@ else:
         wp_u, wp_v = WAYPOINT
         configs = [
             ('shortest_poi',     1.0, 0.0, f'Shortest + {POI_TYPE}',     '#0000FF', 6, None),
-            ('least_traffic_poi',0.1, 0.9, f'Least Traffic + {POI_TYPE}','#FF0000', 5, '12'),
+            ('least_traffic_poi',0.0, 1.0, f'Least Traffic + {POI_TYPE}','#FF0000', 5, '12'),
             ('balanced_poi',     0.5, 0.5, f'Balanced + {POI_TYPE}',     '#00AA00', 5, None),
         ]
         for cname, ad, at, label, color, wt, dash in configs:
