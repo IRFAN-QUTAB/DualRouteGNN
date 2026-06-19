@@ -55,19 +55,15 @@ poi_cols = ['health', 'education', 'commercial', 'public_services', 'transport']
 print(f"\n  Numeric features: {numeric_cols}")
 print(f"  POI features:     {poi_cols}")
 
-# ── Lanes: convert to numeric, fill NaN with median ──
-df_dual_nodes['lanes'] = pd.to_numeric(df_dual_nodes['lanes'], errors='coerce')
-lanes_nan = df_dual_nodes['lanes'].isna().sum()
-lanes_median = df_dual_nodes['lanes'].median()
-df_dual_nodes['lanes_filled'] = df_dual_nodes['lanes'].fillna(lanes_median).astype(float)
-print(f"\n  Lanes: {lanes_nan} NaN filled with median={lanes_median}")
+# LANES: fill by road type median
+lanes_median_by_type = df_dual_nodes.groupby('highway')['lanes'].transform('median')
+lanes_global_median = df_dual_nodes['lanes'].median()
+df_dual_nodes['lanes_filled'] = df_dual_nodes['lanes'].fillna(lanes_median_by_type).fillna(lanes_global_median).astype(float)
 
-# ── Maxspeed: convert to numeric, fill NaN with median ──
-df_dual_nodes['maxspeed'] = pd.to_numeric(df_dual_nodes['maxspeed'], errors='coerce')
-maxspeed_nan = df_dual_nodes['maxspeed'].isna().sum()
-maxspeed_median = df_dual_nodes['maxspeed'].median()
-df_dual_nodes['maxspeed_filled'] = df_dual_nodes['maxspeed'].fillna(maxspeed_median).astype(float)
-print(f"  Maxspeed: {maxspeed_nan} NaN filled with median={maxspeed_median}")
+# MAXSPEED: fill by road type median
+maxspeed_median_by_type = df_dual_nodes.groupby('highway')['maxspeed'].transform('median')
+maxspeed_global_median = df_dual_nodes['maxspeed'].median()
+df_dual_nodes['maxspeed_filled'] = df_dual_nodes['maxspeed'].fillna(maxspeed_median_by_type).fillna(maxspeed_global_median).astype(float)
 
 # ── Oneway binary ──
 df_dual_nodes['oneway_binary'] = df_dual_nodes['oneway'].apply(
