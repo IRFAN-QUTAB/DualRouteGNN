@@ -32,15 +32,37 @@ else:
         tgt_pos = node_positions[TARGET_NODE]
         direct = approx_m(src_pos, tgt_pos)
 
-        poi_candidates = []
-        for (u, v), e in edge_data.items():
-            if e.get('poi_individual', {}).get(POI_TYPE, 0) > 0:
-                if u not in node_positions or v not in node_positions:
-                    continue
-                mid = ((node_positions[u][0]+node_positions[v][0])/2,
-                       (node_positions[u][1]+node_positions[v][1])/2)
-                detour = approx_m(src_pos, mid) + approx_m(mid, tgt_pos) - direct
-                poi_candidates.append((detour, u, v))
+        # Bounding box: 2 km padding in every direction
+            pad = 2.0 / 111.0  # ~2 km in degrees
+            min_lat = min(src_pos[0], tgt_pos[0]) - pad
+            max_lat = max(src_pos[0], tgt_pos[0]) + pad
+            min_lon = min(src_pos[1], tgt_pos[1]) - pad
+            max_lon = max(src_pos[1], tgt_pos[1]) + pad
+            
+            poi_candidates = []
+            for (u, v), e in edge_data.items():
+                if e.get('poi_individual', {}).get(POI_TYPE, 0) > 0:
+                    if u not in node_positions or v not in node_positions:
+                        continue
+                    mid_lat = (node_positions[u][0] + node_positions[v][0]) / 2
+                    mid_lon = (node_positions[u][1] + node_positions[v][1]) / 2
+                    # Check bounding box
+                    if not (min_lat <= mid_lat <= max_lat and min_lon <= mid_lon <= max_lon):
+                        continue
+                    mid = (mid_lat, mid_lon)
+                    detour = approx_m(src_pos, mid) + approx_m(mid, tgt_pos) - direct
+                    poi_candidates.append((detour, u, v))
+            
+            # Fallback: if no POI found in bounding box, search full network
+            if not poi_candidates:
+                for (u, v), e in edge_data.items():
+                    if e.get('poi_individual', {}).get(POI_TYPE, 0) > 0:
+                        if u not in node_positions or v not in node_positions:
+                            continue
+                        mid = ((node_positions[u][0]+node_positions[v][0])/2,
+                               (node_positions[u][1]+node_positions[v][1])/2)
+                        detour = approx_m(src_pos, mid) + approx_m(mid, tgt_pos) - direct
+                        poi_candidates.append((detour, u, v))
 
         poi_candidates.sort()
         print(f"Found {len(poi_candidates)} edges containing {POI_TYPE}")
