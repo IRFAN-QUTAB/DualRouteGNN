@@ -11,16 +11,39 @@ def pick_waypoint(src, tgt, poi_type, max_candidates=30):
     tgt_pos = node_positions[tgt]
     direct = math.sqrt((src_pos[0]-tgt_pos[0])**2 + (src_pos[1]-tgt_pos[1])**2) * 111000
 
+    # Bounding box: 2 km padding in every direction
+    pad = 2.0 / 111.0
+    min_lat = min(src_pos[0], tgt_pos[0]) - pad
+    max_lat = max(src_pos[0], tgt_pos[0]) + pad
+    min_lon = min(src_pos[1], tgt_pos[1]) - pad
+    max_lon = max(src_pos[1], tgt_pos[1]) + pad
+
     cands = []
     for (u, v), e in edge_data.items():
         if e.get('poi_individual', {}).get(poi_type, 0) > 0:
             if u not in node_positions or v not in node_positions:
                 continue
-            mid = ((node_positions[u][0]+node_positions[v][0])/2,
-                   (node_positions[u][1]+node_positions[v][1])/2)
+            mid_lat = (node_positions[u][0] + node_positions[v][0]) / 2
+            mid_lon = (node_positions[u][1] + node_positions[v][1]) / 2
+            if not (min_lat <= mid_lat <= max_lat and min_lon <= mid_lon <= max_lon):
+                continue
+            mid = (mid_lat, mid_lon)
             detour = (math.sqrt((src_pos[0]-mid[0])**2 + (src_pos[1]-mid[1])**2)
                     + math.sqrt((mid[0]-tgt_pos[0])**2 + (mid[1]-tgt_pos[1])**2)) * 111000 - direct
             cands.append((detour, u, v))
+
+    # Fallback: no POI in bounding box, search full network
+    if not cands:
+        for (u, v), e in edge_data.items():
+            if e.get('poi_individual', {}).get(poi_type, 0) > 0:
+                if u not in node_positions or v not in node_positions:
+                    continue
+                mid = ((node_positions[u][0]+node_positions[v][0])/2,
+                       (node_positions[u][1]+node_positions[v][1])/2)
+                detour = (math.sqrt((src_pos[0]-mid[0])**2 + (src_pos[1]-mid[1])**2)
+                        + math.sqrt((mid[0]-tgt_pos[0])**2 + (mid[1]-tgt_pos[1])**2)) * 111000 - direct
+                cands.append((detour, u, v))
+
     cands.sort()
 
     for detour, u, v in cands[:max_candidates]:
