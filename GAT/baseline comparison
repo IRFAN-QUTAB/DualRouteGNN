@@ -1,0 +1,489 @@
+import os, math, time, random, warnings
+warnings.filterwarnings("ignore")
+from collections import defaultdict
+
+import numpy as np
+import pandas as pd
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn import GATConv, GCNConv, SAGEConv
+
+from scipy import stats
+from sklearn.model_selection import KFold, GroupKFold, GridSearchCV
+from sklearn.cluster import KMeans
+from sklearn.neighbors import NearestNeighbors
+from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.neural_network import MLPRegressor
+from sklearn.svm import SVR
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel
+from sklearn.compose import TransformedTargetRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+
+if torch.cuda.is_available():
+    DEVICE = torch.device('cuda')
+    print("GPU:", torch.cuda.get_device_name(0))
+elif getattr(torch.backends, 'mps', None) is not None and torch.backends.mps.is_available():
+    DEVICE = torch.device('mps')
+    print("Apple MPS")
+else:
+    DEVICE = torch.device('cpu')
+    print("CPU only")
+print(f"Device: {DEVICE}, PyTorch: {torch.__version__}")
+
+
+INPUT_DIR = "../data/input"
+OUTPUT_DIR = "../data/output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+GRAPH_FILE   = f"{INPUT_DIR}/dual_graph.pt"
+PRIMAL_NODES = f"{INPUT_DIR}/primal_nodes.csv"
+PRIMAL_EDGES = f"{INPUT_DIR}/primal_edges.csv"
+DUAL_NODES   = f"{INPUT_DIR}/dual_nodes.csv"
+GAT_OOF_FILE = f"{OUTPUT_DIR}/oof_predictions_gat.csv"
+
+HIDDEN_DIM    = 64
+EMBEDDING_DIM = 128
+NUM_HEADS_1   = 8
+NUM_HEADS_2   = 4
+NUM_HEADS_3   = 1
+DROPOUT       = 0.2
+
+EPOCHS        = 500
+LEARNING_RATE = 0.005
+WEIGHT_DECAY  = 1e-4
+HUBER_DELTA   = 5.0
+SEED          = 42
+
+N_FOLDS       = 5
+GRID_KM       = 2.0
+N_DISTRICTS   = 5
+PROTOCOLS     = ['random', 'spatial_block', 'district', 'corridor']
+N_BOOT        = 2000
+BOOT_SEED     = 12345
+
+RUN_GNN       = True
+
+
+def seed_everything(s=SEED):
+    random.seed(s)
+    np.random.seed(s)
+    torch.manual_seed(s)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(s)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+
+seed_everything()
+
+
+class UnifiedGNN(nn.Module):
+    def __init__(self, in_ch, conv, hidden_dim=HIDDEN_DIM, embedding_dim=EMBEDDING_DIM,
+                 h1=NUM_HEADS_1, h2=NUM_HEADS_2, h3=NUM_HEADS_3, dropout=DROPOUT):
+        super().__init__()
+        self.dropout = dropout
+        w1, w2, w3 = hidden_dim * h1, hidden_dim * h2, embedding_dim
+
+        def make(c_in, c_out, heads):
+            if conv == 'gat':
+                return GATConv(c_in, c_out // heads, heads=heads, dropout=dropout,
+                               concat=heads > 1, add_self_loops=True)
+            if conv == 'gcn':
+                return GCNConv(c_in, c_out)
+            if conv == 'sage':
+                return SAGEConv(c_in, c_out)
+            raise ValueError(conv)
+
+        self.input_proj = nn.Sequential(nn.Linear(in_ch, hidden_dim),
+                                        nn.LayerNorm(hidden_dim), nn.ELU())
+        self.conv1 = make(hidden_dim, w1, h1)
+        self.norm1 = nn.LayerNorm(w1)
+        self.skip1 = nn.Linear(hidden_dim, w1)
+        self.conv2 = make(w1, w2, h2)
+        self.norm2 = nn.LayerNorm(w2)
+        self.skip2 = nn.Linear(w1, w2)
+        self.conv3 = make(w2, w3, h3)
+        self.norm3 = nn.LayerNorm(w3)
+        self.skip3 = nn.Linear(w2, w3)
+        self.predictor = nn.Sequential(nn.Linear(w3, 64), nn.ELU(), nn.Dropout(dropout),
+                                       nn.Linear(64, 32), nn.ELU(), nn.Linear(32, 1))
+
+    def forward(self, x, ei):
+        x = self.input_proj(x)
+        x = F.elu(F.dropout(self.norm1(self.conv1(x, ei) + self.skip1(x)),
+                            p=self.dropout, training=self.training))
+        x = F.elu(F.dropout(self.norm2(self.conv2(x, ei) + self.skip2(x)),
+                            p=self.dropout, training=self.training))
+        emb = F.elu(self.norm3(self.conv3(x, ei) + self.skip3(x)))
+        return self.predictor(emb).squeeze()
+
+
+data = torch.load(GRAPH_FILE, weights_only=False)
+osmway_ids = [str(w) for w in data.osmway_ids]
+road_names = list(data.road_names)
+X = data.x.numpy().astype(np.float32)
+y = data.y.numpy().astype(np.float32)
+sensor = data.train_mask.numpy()
+edge_index = data.edge_index
+N_NODES = X.shape[0]
+print(f"Dual nodes: {N_NODES:,} | sensors: {sensor.sum():,} | features: {X.shape[1]}")
+
+
+def _ids(col):
+    return pd.to_numeric(col, errors='coerce').astype('Int64').astype(str)
+
+
+pn = pd.read_csv(PRIMAL_NODES, usecols=['osmnode_id', 'lat', 'lon'])
+pn = pn.dropna(subset=['osmnode_id', 'lat', 'lon'])
+coord = dict(zip(_ids(pn['osmnode_id']), zip(pn['lat'].values, pn['lon'].values)))
+
+pe = pd.read_csv(PRIMAL_EDGES,
+                 usecols=['source_osmnode_id', 'target_osmnode_id', 'osmway_id'])
+lat_acc, lon_acc = defaultdict(list), defaultdict(list)
+for s, t, w in zip(_ids(pe['source_osmnode_id']), _ids(pe['target_osmnode_id']),
+                   _ids(pe['osmway_id'])):
+    for nd in (s, t):
+        if nd in coord:
+            la, lo = coord[nd]
+            lat_acc[w].append(la)
+            lon_acc[w].append(lo)
+
+way_key = list(_ids(pd.Series(osmway_ids)))
+lat = np.array([np.mean(lat_acc[w]) if w in lat_acc else np.nan for w in way_key])
+lon = np.array([np.mean(lon_acc[w]) if w in lon_acc else np.nan for w in way_key])
+print(f"Junctions with coordinates: {len(coord):,} | "
+      f"road sections located: {int(np.isfinite(lat).sum()):,}/{len(way_key):,}")
+assert np.isfinite(lat).mean() > 0.5, (
+    "Most road sections got no coordinate - check that primal_nodes.csv and "
+    "primal_edges.csv come from the same city as dual_graph.pt.")
+
+sidx_all = np.where(sensor)[0]
+missing = np.isnan(lat[sidx_all]) | np.isnan(lon[sidx_all])
+if missing.any():
+    print(f"Dropping {int(missing.sum())} sensor road sections without coordinates "
+          f"({100 * missing.mean():.1f}% of sensors)")
+sidx = sidx_all[~missing]
+
+Xs, ys = X[sidx], y[sidx]
+lat_s, lon_s = lat[sidx], lon[sidx]
+lat0 = float(np.mean(lat_s))
+xkm = (lon_s - np.mean(lon_s)) * 111.0 * math.cos(math.radians(lat0))
+ykm = (lat_s - np.mean(lat_s)) * 111.0
+XY = np.c_[xkm, ykm]
+n = len(sidx)
+print(f"Sensors used: {n}")
+
+dn = pd.read_csv(DUAL_NODES, usecols=['osmway_id', 'highway'])
+w2c = dict(zip(dn['osmway_id'].astype(str), dn['highway'].astype(str)))
+cls_all = np.array([w2c.get(w, 'unknown') for w in osmway_ids])
+cls_s = cls_all[sidx]
+
+
+folds = {}
+
+folds['random'] = list(KFold(N_FOLDS, shuffle=True, random_state=SEED).split(np.arange(n)))
+
+cx = np.floor(xkm / GRID_KM).astype(int)
+cy = np.floor(ykm / GRID_KM).astype(int)
+_, cells = np.unique(cx * 100000 + cy, return_inverse=True)
+ucells = np.unique(cells)
+rng = np.random.RandomState(SEED)
+rng.shuffle(ucells)
+cell2fold = {c: i % N_FOLDS for i, c in enumerate(ucells)}
+block_fold = np.array([cell2fold[c] for c in cells])
+folds['spatial_block'] = [(np.where(block_fold != k)[0], np.where(block_fold == k)[0])
+                          for k in range(N_FOLDS)]
+
+district = KMeans(N_DISTRICTS, random_state=SEED, n_init=10).fit(XY).labels_
+folds['district'] = [(np.where(district != k)[0], np.where(district == k)[0])
+                     for k in range(N_DISTRICTS)]
+
+grp, name2g, g = [], {}, 0
+for i in sidx:
+    nm = road_names[i]
+    if nm is None or (isinstance(nm, float) and np.isnan(nm)) or str(nm).strip() in ('', 'nan', 'None'):
+        grp.append(-1 - int(i))
+    else:
+        if nm not in name2g:
+            name2g[nm] = g
+            g += 1
+        grp.append(name2g[nm])
+grp = np.array(grp)
+corridor_fold = np.full(n, -1)
+for k, (tr, te) in enumerate(GroupKFold(N_FOLDS).split(np.arange(n), groups=grp)):
+    corridor_fold[te] = k
+folds['corridor'] = [(np.where(corridor_fold != k)[0], np.where(corridor_fold == k)[0])
+                     for k in range(N_FOLDS)]
+
+for name in PROTOCOLS:
+    print(f"{name:14s} test-fold sizes: {[len(te) for _, te in folds[name]]}")
+
+
+def metrics(y_true, y_pred):
+    y_pred = np.clip(np.asarray(y_pred, float), 0, None)
+    y_true = np.asarray(y_true, float)
+    return dict(mae=mean_absolute_error(y_true, y_pred),
+                rmse=math.sqrt(mean_squared_error(y_true, y_pred)),
+                r2=r2_score(y_true, y_pred),
+                smape=float((2 * np.abs(y_pred - y_true) /
+                             (np.abs(y_pred) + np.abs(y_true) + 1e-8)).mean() * 100))
+
+
+x_all = torch.tensor(X).to(DEVICE)
+ei_all = edge_index.to(DEVICE)
+y_t = torch.tensor(y)
+
+
+def p_graph(tr, te, conv):
+    seed_everything()
+    model = UnifiedGNN(X.shape[1], conv).to(DEVICE)
+    train_nodes = sidx[tr]
+    ym, ysd = y_t[train_nodes].mean(), y_t[train_nodes].std()
+    yz = ((y_t - ym) / ysd).to(DEVICE)
+    trm = torch.zeros(N_NODES, dtype=torch.bool)
+    trm[train_nodes] = True
+    trm_d = trm.to(DEVICE)
+    opt = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    sch = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS, eta_min=1e-6)
+    crit = nn.HuberLoss(delta=HUBER_DELTA)
+    for _ in range(EPOCHS):
+        model.train()
+        opt.zero_grad()
+        p = model(x_all, ei_all)
+        crit(p[trm_d], yz[trm_d]).backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        opt.step()
+        sch.step()
+    model.eval()
+    with torch.no_grad():
+        pred_all = (model(x_all, ei_all).cpu() * ysd + ym).numpy()
+    return pred_all[sidx[te]]
+
+
+def p_sk(ctor, tr, te):
+    m = ctor()
+    m.fit(Xs[tr], ys[tr])
+    return m.predict(Xs[te])
+
+
+def p_class_mean(tr, te):
+    g = ys[tr].mean()
+    t = {c: ys[tr][cls_s[tr] == c].mean() for c in np.unique(cls_s[tr])}
+    return np.array([t.get(c, g) for c in cls_s[te]])
+
+
+def p_nearest(tr, te, k=1):
+    nn_ = NearestNeighbors(n_neighbors=min(k, len(tr))).fit(XY[tr])
+    _, idx = nn_.kneighbors(XY[te])
+    return ys[tr][idx].mean(1)
+
+
+def p_idw(tr, te, k=8, p=2):
+    nn_ = NearestNeighbors(n_neighbors=min(k, len(tr))).fit(XY[tr])
+    d, idx = nn_.kneighbors(XY[te])
+    d = np.maximum(d, 1e-6)
+    w = 1 / d ** p
+    return (w * ys[tr][idx]).sum(1) / w.sum(1)
+
+
+def p_idw_class(tr, te, k=8, p=2):
+    g = ys[tr].mean()
+    out = np.empty(len(te), float)
+    for j, i in enumerate(te):
+        same = tr[cls_s[tr] == cls_s[i]]
+        if len(same) == 0:
+            out[j] = g
+            continue
+        d = np.linalg.norm(XY[same] - XY[i], axis=1)
+        o = np.argsort(d)[:min(k, len(same))]
+        d = np.maximum(d[o], 1e-6)
+        w = 1 / d ** p
+        out[j] = float((w * ys[same][o]).sum() / w.sum())
+    return out
+
+
+def p_kriging(tr, te):
+    from pykrige.ok import OrdinaryKriging
+    ok = OrdinaryKriging(XY[tr, 0], XY[tr, 1], ys[tr], variogram_model='exponential',
+                         verbose=False, enable_plotting=False)
+    z, _ = ok.execute('points', XY[te, 0], XY[te, 1])
+    return np.array(z)
+
+
+def p_svr(tr, te):
+    grid = GridSearchCV(SVR(kernel='rbf'),
+                        {'C': [1.0, 10.0, 100.0], 'gamma': ['scale', 0.05, 0.2],
+                         'epsilon': [0.1]},
+                        cv=3, n_jobs=-1, scoring='neg_mean_absolute_error')
+    m = TransformedTargetRegressor(regressor=grid, transformer=StandardScaler())
+    m.fit(Xs[tr], ys[tr])
+    return m.predict(Xs[te])
+
+
+def p_gpr(tr, te):
+    kernel = (ConstantKernel(1.0, (1e-3, 1e3))
+              * RBF(length_scale=1.0, length_scale_bounds=(1e-2, 1e2))
+              + WhiteKernel(noise_level=1.0, noise_level_bounds=(1e-5, 1e2)))
+    m = GaussianProcessRegressor(kernel=kernel, normalize_y=True,
+                                 n_restarts_optimizer=1, random_state=SEED)
+    m.fit(Xs[tr], ys[tr])
+    return m.predict(Xs[te])
+
+
+BASELINES = {
+    'Class mean':        p_class_mean,
+    'Linear Regression': lambda tr, te: p_sk(LinearRegression, tr, te),
+    'Random Forest':     lambda tr, te: p_sk(
+        lambda: RandomForestRegressor(300, random_state=SEED, n_jobs=-1), tr, te),
+    'Gradient Boosting': lambda tr, te: p_sk(
+        lambda: GradientBoostingRegressor(random_state=SEED), tr, te),
+    'MLP':               lambda tr, te: p_sk(
+        lambda: MLPRegressor(hidden_layer_sizes=(128, 64, 32), max_iter=1000,
+                             random_state=SEED), tr, te),
+    'SVR':               p_svr,
+    'GPR':               p_gpr,
+    'Nearest-sensor':    lambda tr, te: p_nearest(tr, te, 1),
+    'IDW':               p_idw,
+    'Kriging':           p_kriging,
+    'IDW (same class)':  p_idw_class,
+}
+if RUN_GNN:
+    BASELINES['GCN'] = lambda tr, te: p_graph(tr, te, 'gcn')
+    BASELINES['GraphSAGE'] = lambda tr, te: p_graph(tr, te, 'sage')
+
+print(f"\n{len(BASELINES)} baselines x {len(PROTOCOLS)} protocols x {N_FOLDS} folds")
+
+
+OOF = {}
+skipped = {}
+for split_name in PROTOCOLS:
+    print(f"\n=== {split_name} ===")
+    OOF[split_name] = {}
+    for mname, fn in BASELINES.items():
+        t0 = time.time()
+        pred = np.full(n, np.nan)
+        try:
+            for tr, te in folds[split_name]:
+                pred[te] = np.clip(np.asarray(fn(tr, te), float), 0, None)
+        except Exception as e:
+            skipped.setdefault(mname, str(e)[:120])
+            print(f"  {mname:<18s} SKIPPED ({str(e)[:60]})")
+            continue
+        OOF[split_name][mname] = pred
+        ok = ~np.isnan(pred)
+        m = metrics(ys[ok], pred[ok])
+        print(f"  {mname:<18s} R2={m['r2']:+.3f}  MAE={m['mae']:6.0f}  "
+              f"RMSE={m['rmse']:6.0f}  SMAPE={m['smape']:5.1f}%  "
+              f"({time.time() - t0:.0f}s)")
+
+if skipped:
+    print("\nSkipped:")
+    for k, v in skipped.items():
+        print(f"  {k}: {v}")
+
+for split_name, dd in OOF.items():
+    out = pd.DataFrame({'osmway_id': [osmway_ids[i] for i in sidx],
+                        'road_class': cls_s, 'aadt_true': ys})
+    for mname, pr in dd.items():
+        out[mname] = pr
+    out.to_csv(f"{OUTPUT_DIR}/oof_predictions_baselines_{split_name}.csv", index=False)
+    print(f"Saved: oof_predictions_baselines_{split_name}.csv")
+
+rows = []
+for split_name, dd in OOF.items():
+    for mname, pr in dd.items():
+        ok = ~np.isnan(pr)
+        rows.append({'split': split_name, 'model': mname,
+                     'n_roads': int(ok.sum()), **metrics(ys[ok], pr[ok])})
+df_pool = pd.DataFrame(rows)
+df_pool.to_csv(f"{OUTPUT_DIR}/oof_summary_baselines.csv", index=False)
+print("Saved: oof_summary_baselines.csv")
+
+
+gat_oof = {}
+if os.path.exists(GAT_OOF_FILE):
+    gdf = pd.read_csv(GAT_OOF_FILE)
+    gdf['osmway_id'] = gdf['osmway_id'].astype(str)
+    keys = [osmway_ids[i] for i in sidx]
+    for split_name in PROTOCOLS:
+        if split_name in gdf.columns:
+            lut = dict(zip(gdf['osmway_id'], gdf[split_name]))
+            gat_oof[split_name] = np.array([lut.get(k, np.nan) for k in keys], float)
+    print(f"\nLoaded GAT predictions for: {sorted(gat_oof.keys())}")
+else:
+    print(f"\n{GAT_OOF_FILE} not found - run the GAT file first to get the comparison.")
+
+
+ORDER = ['Class mean', 'Linear Regression', 'Random Forest', 'Gradient Boosting',
+         'MLP', 'SVR', 'GPR', 'Nearest-sensor', 'IDW', 'Kriging',
+         'IDW (same class)', 'GCN', 'GraphSAGE']
+
+for split_name in PROTOCOLS:
+    if split_name not in OOF:
+        continue
+    d = df_pool[df_pool['split'] == split_name].set_index('model')
+    print("\n" + "=" * 70)
+    print(f"{split_name}  (pooled out-of-fold, n = {int(d['n_roads'].iloc[0])})")
+    print("=" * 70)
+    print(f"  {'Model':<20s} {'MAE':>8s} {'RMSE':>8s} {'R2':>8s} {'SMAPE':>8s}")
+    for mname in ORDER:
+        if mname not in d.index:
+            continue
+        r = d.loc[mname]
+        print(f"  {mname:<20s} {r['mae']:8.0f} {r['rmse']:8.0f} "
+              f"{r['r2']:+8.3f} {r['smape']:7.1f}%")
+    if split_name in gat_oof:
+        ok = ~np.isnan(gat_oof[split_name])
+        m = metrics(ys[ok], gat_oof[split_name][ok])
+        print(f"  {'GAT (ours)':<20s} {m['mae']:8.0f} {m['rmse']:8.0f} "
+              f"{m['r2']:+8.3f} {m['smape']:7.1f}%")
+
+
+if gat_oof:
+    rng = np.random.RandomState(BOOT_SEED)
+    cmp_rows = []
+    for split_name in PROTOCOLS:
+        if split_name not in gat_oof or split_name not in OOF:
+            continue
+        ref = gat_oof[split_name]
+        print("\n" + "=" * 92)
+        print(f"{split_name}: GAT against each baseline, one estimate per road section")
+        print("=" * 92)
+        print(f"  {'vs':<20s} {'R2 gap':>8s} {'95% CI':>19s} "
+              f"{'GAT closer':>11s} {'p':>10s}")
+        block = []
+        for mname in ORDER:
+            pr = OOF[split_name].get(mname)
+            if pr is None:
+                continue
+            ok = ~np.isnan(ref) & ~np.isnan(pr)
+            yv, rv, ov = ys[ok], ref[ok], pr[ok]
+            gaps = np.empty(N_BOOT)
+            for b in range(N_BOOT):
+                s = rng.randint(0, len(yv), len(yv))
+                gaps[b] = r2_score(yv[s], rv[s]) - r2_score(yv[s], ov[s])
+            lo, hi = np.percentile(gaps, [2.5, 97.5])
+            gap = r2_score(yv, rv) - r2_score(yv, ov)
+            closer = float((np.abs(ov - yv) > np.abs(rv - yv)).mean() * 100)
+            try:
+                _, p_w = stats.wilcoxon(np.abs(rv - yv), np.abs(ov - yv))
+            except Exception:
+                p_w = np.nan
+            cmp_rows.append({'split': split_name, 'vs': mname, 'n_roads': int(ok.sum()),
+                             'r2_gat': r2_score(yv, rv), 'r2_other': r2_score(yv, ov),
+                             'r2_gap': gap, 'r2_gap_lo': lo, 'r2_gap_hi': hi,
+                             'pct_gat_closer': closer, 'p_wilcoxon': p_w})
+            block.append((gap, mname, lo, hi, closer, p_w))
+        for gap, mname, lo, hi, closer, p_w in sorted(block):
+            star = '*' if lo > 0 or hi < 0 else ' '
+            print(f"  {mname:<20s} {gap:+8.3f} [{lo:+6.3f},{hi:+6.3f}] "
+                  f"{closer:10.1f}% {p_w:10.4f}{star}")
+        print("  * = the 95% bootstrap interval for the gap excludes zero")
+
+    pd.DataFrame(cmp_rows).to_csv(f"{OUTPUT_DIR}/oof_significance.csv", index=False)
+    print("\nSaved: oof_significance.csv")
