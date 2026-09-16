@@ -8,7 +8,7 @@
 
 DualRouteGNN estimates traffic on road sections that have no sensor, and plans routes that pass through a Point of Interest (POI) the driver wants to visit on the way. A driver going from A to B can ask for a route that stops at a pharmacy and gets three options: the shortest, the low-traffic one, and a balanced one.
 
-Only a small fraction of a city's roads carry a traffic sensor. The model learns from those roads and estimates Annual Average Daily Traffic (AADT) on the rest, using only what OpenStreetMap records about a road — no imagery, no probe vehicles, no speed profiles.
+Only a small fraction of a city's roads carry a traffic sensor. The model learns from those roads and estimates Annual Average Daily Traffic (AADT) on the rest, using only what OpenStreetMap records about a road: no imagery, no probe vehicles, no speed profiles.
 
 **Note on what AADT is.** AADT is an annual average daily volume. It carries no information about road capacity, delay, or time of day, so a low-traffic route is not for that reason a faster route. Travel time is reported separately, as free-flow time from length and speed limit.
 
@@ -19,7 +19,7 @@ Only a small fraction of a city's roads carry a traffic sensor. The model learns
 | Step | What happens |
 |------|-------------|
 | 1. Graph Construction | Road network and POIs are downloaded from OpenStreetMap and stored in Neo4j |
-| 2. Feature Engineering | A dual graph is built where each node is one OSM way (a *road section*). Each section gets geometry (length, lanes, speed limit), road type, centrality (PageRank, betweenness, degree) and POI counts by category — 26 features in Madrid, 25 in Paris |
+| 2. Feature Engineering | A dual graph is built where each node is one OSM way (a *road section*). Each section gets geometry (length, lanes, speed limit), road type, centrality (PageRank, betweenness, degree) and POI counts by category, giving 26 features in Madrid and 25 in Paris |
 | 3. GAT Model | A Graph Attention Network runs on the whole dual graph while the loss is computed only on the measured sections, so unmeasured sections still take part in message passing |
 | 4. Routing | A* on the primal graph with cost `d/100 × (α_d + α_t · AADT/T_ref)`. The POI stop is chosen under the same cost, not by distance alone |
 
@@ -31,7 +31,7 @@ A named **street** is made of one or more OSM **ways**. A way is stored as a cha
 
 ## Evaluation
 
-Accuracy on a random split is misleading here, because a test road usually sits next to a road that was in training. Every result is therefore reported under four ways of forming the folds, and a **neighbour-leak rate** is reported with each one — the share of test sections directly connected in the graph to a training section.
+Accuracy on a random split is misleading here, because a test road usually sits next to a road that was in training. Every result is therefore reported under four ways of forming the folds, and each one carries a **neighbour-leak rate**: the share of test sections directly connected in the graph to a training section.
 
 | Protocol | How folds are formed |
 |----------|---------------------|
@@ -74,14 +74,14 @@ Thirteen baselines, all trained and tested on the same folds, in four groups:
 | Road class | Class mean, IDW within the same class |
 | Attributes and network | GCN, GraphSAGE |
 
-GCN and GraphSAGE use the same skeleton as the GAT — same widths, skip connections, normalisation and predictor head — so the only difference between them is the aggregation operator.
+GCN and GraphSAGE use the same skeleton as the GAT, with the same widths, skip connections, normalisation and predictor head, so the only difference between them is the aggregation operator.
 
 ### Routing (Madrid)
 
 | Option | Traffic | Distance | Free-flow time |
 |--------|---------|----------|----------------|
 | Low-traffic vs shortest | −53% to −58% | +27% to +36% | +40% to +58% |
-| At α_t = 0.25 | −43% | +9% | — |
+| At α_t = 0.25 | −43% | +9% | n/a |
 
 Most of the benefit arrives early: a quarter weight on traffic already avoids 43% of the traffic for 9% more distance. POI types tested: clinic, pharmacy, fuel, restaurant, school.
 
@@ -173,7 +173,7 @@ Runs the thirteen baselines on the same folds and compares each one against the 
 python step3_gat_training/baselines.py
 ```
 
-Run this **after** Step 5 — it reads `oof_predictions_gat.csv` rather than retraining the GAT.
+Run this **after** Step 5, because it reads `oof_predictions_gat.csv` rather than retraining the GAT.
 
 ### Step 7: Run the Routing
 
